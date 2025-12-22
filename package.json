@@ -1,0 +1,50 @@
+{
+  "name": "giftit-backend",
+  "version": "1.0.0",
+  "description": "GiftIt - Gift Card Marketplace Backend API",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "jest",
+    "lint": "eslint src/",
+    "sync-giftcards": "node -e \"require('./src/services/giftcard').syncGiftCardsFromRuna().then(console.log).catch(console.error)\""
+  },
+  "keywords": [
+    "giftcard",
+    "marketplace",
+    "api",
+    "nodejs",
+    "express",
+    "mongodb"
+  ],
+  "author": "GiftIt Team",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1693.0",
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-validator": "^7.3.1",
+    "firebase-admin": "^13.6.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.20.4",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "multer-s3": "^3.0.1",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.11",
+    "rate-limiter-flexible": "^9.0.1",
+    "stripe": "^20.1.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
