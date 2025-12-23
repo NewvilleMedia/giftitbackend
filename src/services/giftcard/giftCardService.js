@@ -54,7 +54,13 @@ class GiftCardService {
 
   // Get all gift cards with filters
   async getGiftCards(options = {}) {
-    return GiftCard.searchCards(options.q, options);
+    // Parse query params as integers
+    const parsedOptions = {
+      ...options,
+      page: options.page ? parseInt(options.page, 10) : 1,
+      limit: options.limit ? parseInt(options.limit, 10) : 20,
+    };
+    return GiftCard.searchCards(options.q, parsedOptions);
   }
 
   // Get gift card by ID

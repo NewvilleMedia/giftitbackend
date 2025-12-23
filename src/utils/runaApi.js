@@ -1,38 +1,48 @@
 const axios = require('axios');
+require('dotenv').config();
 
 // Runa API client
 class RunaApiClient {
   constructor() {
-    // Determine if using playground or production based on API key prefix
-    const apiKey = process.env.RUNA_API_KEY || '';
-    const isPlayground = apiKey.toLowerCase().startsWith('xx');
+    this.client = null;
+  }
 
-    this.baseUrl = process.env.RUNA_API_URL ||
-      (isPlayground ? 'https://playground.runa.io/v2' : 'https://api.runa.io/v2');
-    this.apiKey = apiKey;
+  // Lazy initialize the client to ensure env vars are loaded
+  getClient() {
+    if (!this.client) {
+      const apiKey = process.env.RUNA_API_KEY || '';
+      const isPlayground = apiKey.toLowerCase().startsWith('xx');
 
-    this.client = axios.create({
-      baseURL: this.baseUrl,
-      headers: {
-        'X-Api-Key': this.apiKey,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      timeout: 30000,
-    });
+      this.baseUrl = process.env.RUNA_API_URL ||
+        (isPlayground ? 'https://playground.runa.io/v2' : 'https://api.runa.io/v2');
+      this.apiKey = apiKey;
 
-    // Add response interceptor for error handling
-    this.client.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        console.error('Runa API Error:', {
-          status: error.response?.status,
-          data: error.response?.data,
-          url: error.config?.url,
-        });
-        throw error;
-      }
-    );
+      console.log('Initializing Runa API client:', { baseUrl: this.baseUrl, hasApiKey: !!apiKey });
+
+      this.client = axios.create({
+        baseURL: this.baseUrl,
+        headers: {
+          'X-Api-Key': this.apiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 30000,
+      });
+
+      // Add response interceptor for error handling
+      this.client.interceptors.response.use(
+        (response) => response,
+        (error) => {
+          console.error('Runa API Error:', {
+            status: error.response?.status,
+            data: error.response?.data,
+            url: error.config?.url,
+          });
+          throw error;
+        }
+      );
+    }
+    return this.client;
   }
 
   // Get catalog of available gift cards
@@ -58,7 +68,7 @@ class RunaApiClient {
         params.after = options.after;
       }
 
-      const response = await this.client.get('/product', { params });
+      const response = await this.getClient().get('/product', { params });
       return {
         success: true,
         data: response.data.catalog || response.data.products || response.data,
@@ -79,7 +89,7 @@ class RunaApiClient {
   // Get single product details
   async getProduct(productCode) {
     try {
-      const response = await this.client.get(`/product/${productCode}`);
+      const response = await this.getClient().get(`/product/${productCode}`);
       return {
         success: true,
         data: response.data,
@@ -95,7 +105,7 @@ class RunaApiClient {
   // Get product inventory/availability
   async getProductAvailability(productId) {
     try {
-      const response = await this.client.get(`/products/${productId}/availability`);
+      const response = await this.getClient().get(`/products/${productId}/availability`);
       return {
         success: true,
         data: response.data,
@@ -133,7 +143,7 @@ class RunaApiClient {
         webhook_url: orderData.webhookUrl,
       };
 
-      const response = await this.client.post('/orders', payload);
+      const response = await this.getClient().post('/orders', payload);
       return {
         success: true,
         data: response.data,
@@ -151,7 +161,7 @@ class RunaApiClient {
   // Get order details
   async getOrder(orderId) {
     try {
-      const response = await this.client.get(`/orders/${orderId}`);
+      const response = await this.getClient().get(`/orders/${orderId}`);
       return {
         success: true,
         data: response.data,
@@ -167,7 +177,7 @@ class RunaApiClient {
   // Get order status
   async getOrderStatus(orderId) {
     try {
-      const response = await this.client.get(`/orders/${orderId}/status`);
+      const response = await this.getClient().get(`/orders/${orderId}/status`);
       return {
         success: true,
         data: response.data,
@@ -183,7 +193,7 @@ class RunaApiClient {
   // Get redemption code for an order
   async getRedemptionCode(orderId) {
     try {
-      const response = await this.client.get(`/orders/${orderId}/codes`);
+      const response = await this.getClient().get(`/orders/${orderId}/codes`);
       return {
         success: true,
         data: response.data,
@@ -199,7 +209,7 @@ class RunaApiClient {
   // Cancel an order (if possible)
   async cancelOrder(orderId, reason = '') {
     try {
-      const response = await this.client.post(`/orders/${orderId}/cancel`, { reason });
+      const response = await this.getClient().post(`/orders/${orderId}/cancel`, { reason });
       return {
         success: true,
         data: response.data,
@@ -216,7 +226,7 @@ class RunaApiClient {
   async resendOrder(orderId, email = null) {
     try {
       const payload = email ? { email } : {};
-      const response = await this.client.post(`/orders/${orderId}/resend`, payload);
+      const response = await this.getClient().post(`/orders/${orderId}/resend`, payload);
       return {
         success: true,
         data: response.data,
@@ -232,7 +242,7 @@ class RunaApiClient {
   // Get account balance
   async getBalance() {
     try {
-      const response = await this.client.get('/account/balance');
+      const response = await this.getClient().get('/account/balance');
       return {
         success: true,
         data: response.data,
@@ -255,7 +265,7 @@ class RunaApiClient {
         end_date: options.endDate,
       };
 
-      const response = await this.client.get('/transactions', { params });
+      const response = await this.getClient().get('/transactions', { params });
       return {
         success: true,
         data: response.data,
@@ -271,7 +281,7 @@ class RunaApiClient {
   // Get available categories
   async getCategories() {
     try {
-      const response = await this.client.get('/categories');
+      const response = await this.getClient().get('/categories');
       return {
         success: true,
         data: response.data,
