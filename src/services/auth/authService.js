@@ -117,7 +117,29 @@ class AuthService {
       user: this.sanitizeUser(user),
       accessToken,
       refreshToken,
+      mustChangePassword: user.mustChangePassword || false,
     };
+  }
+
+  // Force change password (after login with temp password)
+  async forceChangePassword(userId, newPassword) {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    user.password = newPassword;
+    user.mustChangePassword = false;
+    user.tempPassword = null;
+    await user.save();
+
+    // Send confirmation email
+    await sendEmail(user.email, 'passwordChanged', {
+      firstName: user.firstName,
+    });
+
+    return { message: 'Password changed successfully' };
   }
 
   // Refresh access token
@@ -186,31 +208,35 @@ class AuthService {
     return { message: 'Verification email sent' };
   }
 
-  // Forgot password
+  // Forgot password - sends temporary password
   async forgotPassword(email) {
     const user = await User.findOne({ email });
 
     if (!user) {
       // Return success even if user not found (security)
-      return { message: 'If an account exists, a password reset email has been sent' };
+      return { message: 'If an account exists, a temporary password has been sent to your email' };
     }
 
-    // Generate reset token
-    const resetToken = generateRandomString(32);
-    const hashedToken = hashString(resetToken);
+    // Generate a temporary password (8 characters: letters + numbers)
+    const tempPassword = generateRandomString(8).toUpperCase();
 
-    user.passwordResetToken = hashedToken;
-    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    // Set the temp password (will be hashed by pre-save middleware)
+    user.password = tempPassword;
+    user.mustChangePassword = true;
+    user.tempPassword = tempPassword; // Store unhashed for reference (optional, will clear on password change)
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.loginAttempts = 0;
+    user.lockUntil = undefined;
     await user.save();
 
-    // Send reset email
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+    // Send temp password via email
     await sendEmail(email, 'passwordReset', {
       firstName: user.firstName,
-      resetUrl,
+      resetCode: tempPassword,
     });
 
-    return { message: 'If an account exists, a password reset email has been sent' };
+    return { message: 'If an account exists, a temporary password has been sent to your email' };
   }
 
   // Reset password

@@ -41,6 +41,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.11",
     "rate-limiter-flexible": "^9.0.1",
+    "resend": "^6.8.0",
     "stripe": "^20.1.0",
     "uuid": "^13.0.0"
   },

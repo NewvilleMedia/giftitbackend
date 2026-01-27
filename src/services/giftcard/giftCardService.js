@@ -130,6 +130,7 @@ class GiftCardService {
       deliveryDate,
       deliveryMethod = 'email',
       paymentMethodId,
+      useWalletBalance = false,
     } = purchaseData;
 
     // Get gift card
@@ -163,17 +164,34 @@ class GiftCardService {
     const discount = giftCard.discount ? (amount * giftCard.discount) / 100 : 0;
     const totalPaid = (amount - discount) * quantity;
 
-    // Create payment intent
-    const paymentIntent = await createPaymentIntent(
-      totalPaid,
-      giftCard.currency,
-      user.stripeCustomerId,
-      {
-        type: 'gift_card_purchase',
-        giftCardId: giftCardId.toString(),
-        userId: userId.toString(),
+    let paymentIntent = null;
+    let paymentMethod = 'card';
+
+    // Handle wallet balance payment
+    if (useWalletBalance) {
+      const walletBalance = user.wallet?.balance || 0;
+      if (walletBalance < totalPaid) {
+        throw new Error(`Insufficient wallet balance. You have $${walletBalance.toFixed(2)} but need $${totalPaid.toFixed(2)}`);
       }
-    );
+      // Deduct from wallet
+      user.wallet.balance -= totalPaid;
+      await user.save();
+      paymentMethod = 'wallet';
+    } else if (paymentMethodId) {
+      // Create payment intent with Stripe
+      paymentIntent = await createPaymentIntent(
+        totalPaid,
+        giftCard.currency,
+        user.stripeCustomerId,
+        {
+          type: 'gift_card_purchase',
+          giftCardId: giftCardId.toString(),
+          userId: userId.toString(),
+        }
+      );
+    } else {
+      throw new Error('Payment method or wallet balance required');
+    }
 
     // Determine recipient
     let recipientId = null;
@@ -202,19 +220,19 @@ class GiftCardService {
       deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
       deliveryMethod,
       provider: giftCard.provider,
-      status: 'processing',
-      paymentMethod: 'card',
-      paymentIntentId: paymentIntent.id,
-      paymentStatus: 'pending',
+      status: useWalletBalance ? 'completed' : 'processing',
+      paymentMethod,
+      paymentIntentId: paymentIntent?.id || null,
+      paymentStatus: useWalletBalance ? 'succeeded' : 'pending',
     });
 
     // Create transaction record
     await Transaction.createPurchaseTransaction({
       userId,
       amount: totalPaid,
-      status: 'pending',
-      paymentIntentId: paymentIntent.id,
-      paymentMethodId,
+      status: useWalletBalance ? 'completed' : 'pending',
+      paymentIntentId: paymentIntent?.id || null,
+      paymentMethodId: useWalletBalance ? 'wallet' : paymentMethodId,
       purchaseId: purchase._id,
       description: `Purchase of ${giftCard.name} gift card`,
     });
@@ -244,24 +262,36 @@ class GiftCardService {
       // Continue with purchase, handle provider order later
     }
 
-    return {
+    const response = {
       purchase: {
         id: purchase._id,
         orderId: generateOrderId(),
         amount,
         totalPaid,
         status: purchase.status,
+        paymentMethod,
         giftCard: {
           name: giftCard.name,
           brandName: giftCard.brandName,
           image: giftCard.image,
         },
       },
-      paymentIntent: {
+    };
+
+    // Only include paymentIntent for card payments
+    if (paymentIntent) {
+      response.paymentIntent = {
         id: paymentIntent.id,
         clientSecret: paymentIntent.client_secret,
-      },
-    };
+      };
+    }
+
+    // Include updated wallet balance for wallet payments
+    if (useWalletBalance) {
+      response.walletBalance = user.wallet.balance;
+    }
+
+    return response;
   }
 
   // Complete purchase (after payment confirmation)

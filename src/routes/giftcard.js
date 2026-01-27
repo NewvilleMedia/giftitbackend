@@ -82,6 +82,28 @@ router.get(
   })
 );
 
+// Get received gift cards (must be before /:giftCardId)
+router.get(
+  '/received',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const options = {
+      status: req.query.status,
+      page: parseInt(req.query.page) || 1,
+      limit: parseInt(req.query.limit) || 20,
+    };
+    const result = await giftCardService.getReceivedGiftCards(
+      req.userId,
+      req.user.email,
+      options
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
 // Get gift card by ID
 router.get(
   '/:giftCardId',
@@ -124,28 +146,6 @@ router.get(
       limit: parseInt(req.query.limit) || 20,
     };
     const result = await giftCardService.getUserPurchases(req.userId, options);
-    res.json({
-      success: true,
-      data: result,
-    });
-  })
-);
-
-// Get received gift cards
-router.get(
-  '/received',
-  authenticate,
-  asyncHandler(async (req, res) => {
-    const options = {
-      status: req.query.status,
-      page: parseInt(req.query.page) || 1,
-      limit: parseInt(req.query.limit) || 20,
-    };
-    const result = await giftCardService.getReceivedGiftCards(
-      req.userId,
-      req.user.email,
-      options
-    );
     res.json({
       success: true,
       data: result,

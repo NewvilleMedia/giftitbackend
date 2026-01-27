@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 require('dotenv').config();
 
 // Runa API client
@@ -121,35 +122,57 @@ class RunaApiClient {
   // Create an order (purchase gift cards)
   async createOrder(orderData) {
     try {
+      // Build items array for Runa API v2
+      const items = [];
+      const quantity = orderData.quantity || 1;
+
+      for (let i = 0; i < quantity; i++) {
+        const item = {
+          face_value: parseFloat(orderData.amount).toFixed(2),
+          products: {
+            type: 'SINGLE',
+            value: orderData.productId,
+          },
+          distribution_method: {
+            type: 'EMAIL',
+            email_address: orderData.recipientEmail,
+          },
+        };
+        items.push(item);
+      }
+
       const payload = {
-        product_id: orderData.productId,
-        amount: orderData.amount,
-        quantity: orderData.quantity || 1,
-        currency: orderData.currency || 'USD',
-        recipient: {
-          email: orderData.recipientEmail,
-          name: orderData.recipientName,
-          message: orderData.personalMessage,
+        payment_method: {
+          type: 'ACCOUNT_BALANCE',
+          currency: orderData.currency || 'USD',
         },
-        sender: {
-          name: orderData.senderName,
-          email: orderData.senderEmail,
+        items,
+        description: orderData.personalMessage || `GiftIt order for ${orderData.recipientName}`,
+        metadata: {
+          sender_name: orderData.senderName,
+          sender_email: orderData.senderEmail,
+          recipient_name: orderData.recipientName,
+          ...orderData.metadata,
         },
-        delivery: {
-          method: orderData.deliveryMethod || 'email',
-          scheduled_at: orderData.scheduledDelivery || null,
-        },
-        metadata: orderData.metadata || {},
-        webhook_url: orderData.webhookUrl,
       };
 
-      const response = await this.getClient().post('/orders', payload);
+      console.log('Runa order payload:', JSON.stringify(payload, null, 2));
+
+      // Generate unique idempotency key to prevent duplicate orders
+      const idempotencyKey = crypto.randomUUID();
+
+      const response = await this.getClient().post('/order', payload, {
+        headers: {
+          'X-Idempotency-Key': idempotencyKey,
+        },
+      });
       return {
         success: true,
         data: response.data,
         orderId: response.data.id || response.data.order_id,
       };
     } catch (error) {
+      console.error('Runa createOrder error details:', error.response?.data);
       return {
         success: false,
         error: error.response?.data?.message || error.message,
@@ -161,7 +184,7 @@ class RunaApiClient {
   // Get order details
   async getOrder(orderId) {
     try {
-      const response = await this.getClient().get(`/orders/${orderId}`);
+      const response = await this.getClient().get(`/order/${orderId}`);
       return {
         success: true,
         data: response.data,
@@ -177,7 +200,7 @@ class RunaApiClient {
   // Get order status
   async getOrderStatus(orderId) {
     try {
-      const response = await this.getClient().get(`/orders/${orderId}/status`);
+      const response = await this.getClient().get(`/order/${orderId}/status`);
       return {
         success: true,
         data: response.data,
@@ -193,7 +216,7 @@ class RunaApiClient {
   // Get redemption code for an order
   async getRedemptionCode(orderId) {
     try {
-      const response = await this.getClient().get(`/orders/${orderId}/codes`);
+      const response = await this.getClient().get(`/order/${orderId}/codes`);
       return {
         success: true,
         data: response.data,
@@ -209,7 +232,7 @@ class RunaApiClient {
   // Cancel an order (if possible)
   async cancelOrder(orderId, reason = '') {
     try {
-      const response = await this.getClient().post(`/orders/${orderId}/cancel`, { reason });
+      const response = await this.getClient().post(`/order/${orderId}/cancel`, { reason });
       return {
         success: true,
         data: response.data,
@@ -226,7 +249,7 @@ class RunaApiClient {
   async resendOrder(orderId, email = null) {
     try {
       const payload = email ? { email } : {};
-      const response = await this.getClient().post(`/orders/${orderId}/resend`, payload);
+      const response = await this.getClient().post(`/order/${orderId}/resend`, payload);
       return {
         success: true,
         data: response.data,
@@ -296,7 +319,6 @@ class RunaApiClient {
 
   // Validate webhook signature
   validateWebhookSignature(payload, signature, secret) {
-    const crypto = require('crypto');
     const expectedSignature = crypto
       .createHmac('sha256', secret)
       .update(JSON.stringify(payload))

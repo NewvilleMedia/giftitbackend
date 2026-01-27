@@ -84,8 +84,13 @@ const purchaseGiftCardValidator = [
     .isIn(['email', 'sms', 'in_app', 'all'])
     .withMessage('Invalid delivery method'),
   body('paymentMethodId')
-    .notEmpty()
-    .withMessage('Payment method ID is required'),
+    .optional()
+    .isString()
+    .withMessage('Payment method ID must be a string'),
+  body('useWalletBalance')
+    .optional()
+    .isBoolean()
+    .withMessage('useWalletBalance must be a boolean'),
 ];
 
 const purchaseIdValidator = [

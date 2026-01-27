@@ -393,6 +393,40 @@ class UserService {
     return { message: 'Account deleted' };
   }
 
+  // Add funds directly (dev/test - no payment required)
+  async addWalletFundsDirectly(userId, amount) {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    const balanceBefore = user.wallet?.balance || 0;
+
+    // Initialize wallet if it doesn't exist
+    if (!user.wallet) {
+      user.wallet = { balance: 0, currency: 'USD' };
+    }
+
+    user.wallet.balance += amount;
+    await user.save();
+
+    // Create transaction record
+    await Transaction.createWalletTransaction({
+      userId,
+      type: 'wallet_credit',
+      amount,
+      description: 'Wallet credit (direct)',
+      balanceBefore,
+      balanceAfter: user.wallet.balance,
+    });
+
+    return {
+      balance: user.wallet.balance,
+      currency: user.wallet.currency,
+    };
+  }
+
   // Sanitize user data
   sanitizeUser(user) {
     const userObj = user.toObject ? user.toObject() : user;

@@ -189,6 +189,27 @@ router.post(
   })
 );
 
+// Add funds to wallet (test/dev - no payment required)
+router.post(
+  '/wallet/add',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const { amount } = req.body;
+    if (!amount || amount <= 0 || amount > 1000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount must be between $1 and $1000',
+      });
+    }
+    const result = await userService.addWalletFundsDirectly(req.userId, amount);
+    res.json({
+      success: true,
+      message: 'Funds added successfully',
+      data: result,
+    });
+  })
+);
+
 // Get affiliate code
 router.get(
   '/affiliate',

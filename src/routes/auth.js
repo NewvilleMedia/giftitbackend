@@ -138,6 +138,26 @@ router.post(
   })
 );
 
+// Force change password (after temp password login)
+router.post(
+  '/force-change-password',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 8 characters',
+      });
+    }
+    const result = await authService.forceChangePassword(req.userId, newPassword);
+    res.json({
+      success: true,
+      ...result,
+    });
+  })
+);
+
 // Logout
 router.post(
   '/logout',
