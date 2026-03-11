@@ -5,7 +5,14 @@ const GiftCardPurchase = require('../../models/GiftCardPurchase');
 const Subscription = require('../../models/Subscription');
 const Transaction = require('../../models/Transaction');
 const Campaign = require('../../models/Campaign');
+const Notification = require('../../models/Notification');
+const AuditLog = require('../../models/AuditLog');
+const PromoCode = require('../../models/PromoCode');
+const SystemSettings = require('../../models/SystemSettings');
 const runaApi = require('../../utils/runaApi');
+const { sendEmail } = require('../../utils/email');
+const { sendPushNotification } = require('../../utils/pushNotification');
+const { stripe } = require('../../config/stripe');
 
 class AdminService {
   // Dashboard statistics
@@ -457,6 +464,529 @@ class AdminService {
       topGiftCards,
       byCategory,
     };
+  }
+
+  // ==================== USER BAN/UNBAN ====================
+
+  async banUser(userId, adminId, reason = '') {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    if (user.role === 'superadmin') {
+      throw new Error('Cannot ban a superadmin');
+    }
+
+    user.isActive = false;
+    user.bannedAt = new Date();
+    user.banReason = reason;
+    await user.save();
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'user.ban',
+      resourceType: 'user',
+      resourceId: userId,
+      resourceName: `${user.firstName} ${user.lastName}`,
+      description: `Banned user: ${user.email}. Reason: ${reason || 'No reason provided'}`,
+      newValue: { isActive: false, bannedAt: user.bannedAt, banReason: reason },
+    });
+
+    // Send notification email to user
+    try {
+      await sendEmail(user.email, 'accountBanned', {
+        firstName: user.firstName,
+        reason: reason || 'Violation of terms of service',
+      });
+    } catch (error) {
+      console.error('Failed to send ban notification email:', error);
+    }
+
+    return { message: 'User banned successfully', user };
+  }
+
+  async unbanUser(userId, adminId) {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    user.isActive = true;
+    user.bannedAt = undefined;
+    user.banReason = undefined;
+    await user.save();
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'user.unban',
+      resourceType: 'user',
+      resourceId: userId,
+      resourceName: `${user.firstName} ${user.lastName}`,
+      description: `Unbanned user: ${user.email}`,
+      newValue: { isActive: true },
+    });
+
+    // Send notification email to user
+    try {
+      await sendEmail(user.email, 'accountUnbanned', {
+        firstName: user.firstName,
+      });
+    } catch (error) {
+      console.error('Failed to send unban notification email:', error);
+    }
+
+    return { message: 'User unbanned successfully', user };
+  }
+
+  // ==================== BUSINESS SUSPEND/UNSUSPEND ====================
+
+  async suspendBusiness(businessId, adminId, reason = '') {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    business.isActive = false;
+    business.suspendedAt = new Date();
+    business.suspendReason = reason;
+    await business.save();
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'business.suspend',
+      resourceType: 'business',
+      resourceId: businessId,
+      resourceName: business.name,
+      description: `Suspended business: ${business.name}. Reason: ${reason || 'No reason provided'}`,
+      newValue: { isActive: false, suspendedAt: business.suspendedAt, suspendReason: reason },
+    });
+
+    // Notify business owner
+    const owner = await User.findById(business.ownerId);
+    if (owner) {
+      try {
+        await sendEmail(owner.email, 'businessSuspended', {
+          firstName: owner.firstName,
+          businessName: business.name,
+          reason: reason || 'Violation of terms of service',
+        });
+      } catch (error) {
+        console.error('Failed to send suspension notification email:', error);
+      }
+    }
+
+    return { message: 'Business suspended successfully', business };
+  }
+
+  async unsuspendBusiness(businessId, adminId) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    business.isActive = true;
+    business.suspendedAt = undefined;
+    business.suspendReason = undefined;
+    await business.save();
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'business.unsuspend',
+      resourceType: 'business',
+      resourceId: businessId,
+      resourceName: business.name,
+      description: `Unsuspended business: ${business.name}`,
+      newValue: { isActive: true },
+    });
+
+    // Notify business owner
+    const owner = await User.findById(business.ownerId);
+    if (owner) {
+      try {
+        await sendEmail(owner.email, 'businessUnsuspended', {
+          firstName: owner.firstName,
+          businessName: business.name,
+        });
+      } catch (error) {
+        console.error('Failed to send unsuspend notification email:', error);
+      }
+    }
+
+    return { message: 'Business unsuspended successfully', business };
+  }
+
+  // ==================== TRANSACTION REFUND ====================
+
+  async refundTransaction(transactionId, adminId, reason = '') {
+    const transaction = await Transaction.findById(transactionId)
+      .populate('userId', 'firstName lastName email wallet');
+
+    if (!transaction) {
+      throw new Error('Transaction not found');
+    }
+
+    if (transaction.status === 'refunded') {
+      throw new Error('Transaction already refunded');
+    }
+
+    if (transaction.status !== 'completed') {
+      throw new Error('Can only refund completed transactions');
+    }
+
+    const user = transaction.userId;
+    let stripeRefund = null;
+
+    // If paid via Stripe, process refund
+    if (transaction.paymentIntentId) {
+      try {
+        stripeRefund = await stripe.refunds.create({
+          payment_intent: transaction.paymentIntentId,
+          reason: 'requested_by_customer',
+        });
+      } catch (error) {
+        throw new Error(`Stripe refund failed: ${error.message}`);
+      }
+    }
+
+    // Update transaction
+    transaction.status = 'refunded';
+    transaction.refundedAt = new Date();
+    transaction.refundReason = reason;
+    transaction.refundId = stripeRefund?.id;
+    await transaction.save();
+
+    // If wallet was debited, credit it back
+    if (transaction.type === 'wallet_debit' || transaction.paymentMethod === 'wallet') {
+      const userDoc = await User.findById(user._id);
+      userDoc.wallet.balance += transaction.amount;
+      await userDoc.save();
+    }
+
+    // Create refund transaction record
+    await Transaction.create({
+      userId: user._id,
+      businessId: transaction.businessId,
+      type: 'refund',
+      amount: transaction.amount,
+      currency: transaction.currency,
+      status: 'completed',
+      paymentProvider: transaction.paymentProvider,
+      refundId: stripeRefund?.id,
+      description: `Refund for transaction ${transaction._id}. Reason: ${reason || 'Admin initiated'}`,
+      relatedTransactionId: transaction._id,
+    });
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'transaction.refund',
+      resourceType: 'transaction',
+      resourceId: transactionId,
+      description: `Refunded transaction ${transactionId} for $${transaction.amount}. Reason: ${reason || 'No reason provided'}`,
+      previousValue: { status: 'completed' },
+      newValue: { status: 'refunded', refundedAt: transaction.refundedAt },
+    });
+
+    // Notify user
+    try {
+      await sendEmail(user.email, 'refundProcessed', {
+        firstName: user.firstName,
+        amount: transaction.amount,
+        currency: transaction.currency,
+        reason: reason || 'Refund requested',
+      });
+    } catch (error) {
+      console.error('Failed to send refund notification email:', error);
+    }
+
+    return { message: 'Transaction refunded successfully', transaction };
+  }
+
+  // ==================== SYSTEM SETTINGS ====================
+
+  async getSettings(category = null) {
+    if (category) {
+      return SystemSettings.getByCategory(category);
+    }
+    return SystemSettings.getAll();
+  }
+
+  async updateSettings(settings, adminId) {
+    const admin = await User.findById(adminId);
+    const updatedSettings = [];
+
+    for (const [key, value] of Object.entries(settings)) {
+      const setting = await SystemSettings.set(key, value, { updatedBy: adminId });
+      updatedSettings.push(setting);
+    }
+
+    // Log audit
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'settings.update',
+      resourceType: 'settings',
+      description: `Updated ${Object.keys(settings).length} system settings`,
+      newValue: settings,
+    });
+
+    return updatedSettings;
+  }
+
+  async initializeSettings() {
+    return SystemSettings.initializeDefaults();
+  }
+
+  // ==================== AUDIT LOGS ====================
+
+  async getAuditLogs(options = {}) {
+    return AuditLog.getLogs(options);
+  }
+
+  // ==================== BROADCAST NOTIFICATIONS ====================
+
+  async broadcastNotification(adminId, notificationData) {
+    const { title, message, targetAudience, channels, scheduledFor } = notificationData;
+
+    let filter = {};
+
+    switch (targetAudience) {
+      case 'all':
+        filter = { isActive: true };
+        break;
+      case 'users':
+        filter = { isActive: true, role: 'user' };
+        break;
+      case 'business':
+        filter = { isActive: true, role: 'business' };
+        break;
+      case 'verified':
+        filter = { isActive: true, isEmailVerified: true };
+        break;
+      default:
+        filter = { isActive: true };
+    }
+
+    const users = await User.find(filter).select('_id email firstName deviceTokens');
+
+    const notifications = [];
+
+    for (const user of users) {
+      // Create in-app notification
+      const notification = await Notification.create({
+        userId: user._id,
+        type: 'promotional',
+        title,
+        message,
+        body: message,
+        priority: 'normal',
+        channels: {
+          inApp: { enabled: true },
+          push: { enabled: channels?.includes('push') },
+          email: { enabled: channels?.includes('email') },
+        },
+        scheduledFor: scheduledFor ? new Date(scheduledFor) : undefined,
+      });
+
+      notifications.push(notification);
+
+      // Send push notification if enabled and not scheduled
+      if (channels?.includes('push') && !scheduledFor && user.deviceTokens?.length > 0) {
+        try {
+          for (const deviceToken of user.deviceTokens) {
+            await sendPushNotification(deviceToken.token, {
+              title,
+              body: message,
+              data: { type: 'promotional', notificationId: notification._id.toString() },
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to send push to user ${user._id}:`, error);
+        }
+      }
+
+      // Send email if enabled and not scheduled
+      if (channels?.includes('email') && !scheduledFor) {
+        try {
+          await sendEmail(user.email, 'promotional', {
+            firstName: user.firstName,
+            title,
+            message,
+          });
+        } catch (error) {
+          console.error(`Failed to send email to user ${user._id}:`, error);
+        }
+      }
+    }
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'notification.broadcast',
+      resourceType: 'notification',
+      description: `Broadcast notification to ${users.length} users. Title: ${title}`,
+      metadata: { targetAudience, channels, userCount: users.length },
+    });
+
+    return {
+      message: `Notification sent to ${users.length} users`,
+      notificationCount: notifications.length,
+    };
+  }
+
+  // ==================== PROMO CODES ====================
+
+  async getPromoCodes(options = {}) {
+    return PromoCode.getActiveCodes(options);
+  }
+
+  async getPromoCodeById(promoCodeId) {
+    const promoCode = await PromoCode.findById(promoCodeId)
+      .populate('createdBy', 'firstName lastName email');
+
+    if (!promoCode) {
+      throw new Error('Promo code not found');
+    }
+
+    return promoCode;
+  }
+
+  async createPromoCode(adminId, promoCodeData) {
+    const existingCode = await PromoCode.findOne({ code: promoCodeData.code.toUpperCase() });
+    if (existingCode) {
+      throw new Error('Promo code already exists');
+    }
+
+    const promoCode = await PromoCode.create({
+      ...promoCodeData,
+      code: promoCodeData.code.toUpperCase(),
+      createdBy: adminId,
+    });
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'promocode.create',
+      resourceType: 'promocode',
+      resourceId: promoCode._id,
+      resourceName: promoCode.code,
+      description: `Created promo code: ${promoCode.code}`,
+      newValue: promoCodeData,
+    });
+
+    return promoCode;
+  }
+
+  async updatePromoCode(promoCodeId, adminId, updateData) {
+    const promoCode = await PromoCode.findById(promoCodeId);
+
+    if (!promoCode) {
+      throw new Error('Promo code not found');
+    }
+
+    const previousValue = promoCode.toObject();
+
+    const allowedFields = [
+      'name',
+      'description',
+      'discountType',
+      'discountValue',
+      'maxDiscountAmount',
+      'usageLimit',
+      'perUserLimit',
+      'minimumPurchaseAmount',
+      'startDate',
+      'endDate',
+      'applicableCategories',
+      'isActive',
+      'tags',
+      'notes',
+    ];
+
+    for (const field of allowedFields) {
+      if (updateData[field] !== undefined) {
+        promoCode[field] = updateData[field];
+      }
+    }
+
+    await promoCode.save();
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'promocode.update',
+      resourceType: 'promocode',
+      resourceId: promoCodeId,
+      resourceName: promoCode.code,
+      description: `Updated promo code: ${promoCode.code}`,
+      previousValue,
+      newValue: updateData,
+    });
+
+    return promoCode;
+  }
+
+  async deletePromoCode(promoCodeId, adminId) {
+    const promoCode = await PromoCode.findById(promoCodeId);
+
+    if (!promoCode) {
+      throw new Error('Promo code not found');
+    }
+
+    await promoCode.deleteOne();
+
+    // Log audit
+    const admin = await User.findById(adminId);
+    await AuditLog.log({
+      userId: adminId,
+      userEmail: admin.email,
+      userRole: admin.role,
+      action: 'promocode.delete',
+      resourceType: 'promocode',
+      resourceId: promoCodeId,
+      resourceName: promoCode.code,
+      description: `Deleted promo code: ${promoCode.code}`,
+    });
+
+    return { message: 'Promo code deleted successfully' };
+  }
+
+  async validatePromoCode(code, userId, purchaseAmount) {
+    return PromoCode.validateCode(code, userId, purchaseAmount);
   }
 }
 

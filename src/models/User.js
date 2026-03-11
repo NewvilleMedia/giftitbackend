@@ -132,6 +132,15 @@ const userSchema = new mongoose.Schema(
       ref: 'User',
       default: null,
     },
+    // Ban tracking
+    bannedAt: {
+      type: Date,
+      default: null,
+    },
+    banReason: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,

@@ -137,6 +137,15 @@ const businessSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // Suspension tracking
+    suspendedAt: {
+      type: Date,
+      default: null,
+    },
+    suspendReason: {
+      type: String,
+      default: null,
+    },
     verificationDocuments: [{
       type: { type: String },
       url: String,

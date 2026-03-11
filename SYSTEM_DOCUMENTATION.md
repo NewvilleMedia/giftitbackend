@@ -11,6 +11,7 @@
 8. [Authentication & Security](#authentication--security)
 9. [User Flows](#user-flows)
 10. [Business Features](#business-features)
+11. [Configuration & Setup](#configuration--setup)
 
 ---
 
@@ -23,12 +24,13 @@
 - **Gift Card Provider**: Runa API integration for real gift card fulfillment
 
 ### Key Features
-- Browse and purchase gift cards from 100+ brands
+- Browse and purchase gift cards from 900+ brands (via Runa)
 - Send gift cards to others via email
 - Recurring gift card subscriptions
-- Digital wallet for managing owned cards
+- Digital wallet for managing owned cards and balance
 - Business accounts for employee rewards/campaigns
 - Real-time notifications (push + email)
+- Temp password reset flow with force password change
 
 ---
 
@@ -55,8 +57,8 @@
           │              │              │              │
           ▼              ▼              ▼              ▼
     ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
-    │  Stripe  │  │   Runa   │  │ Firebase │  │   AWS    │
-    │ Payments │  │Gift Cards│  │   Push   │  │   S3     │
+    │  Stripe  │  │   Runa   │  │  Resend  │  │   AWS    │
+    │ Payments │  │Gift Cards│  │  Email   │  │   S3     │
     └──────────┘  └──────────┘  └──────────┘  └──────────┘
 ```
 
@@ -72,7 +74,7 @@
 | Gift Card Provider | Runa API |
 | Push Notifications | Firebase Admin SDK |
 | File Storage | AWS S3 |
-| Email | Nodemailer |
+| Email | Resend |
 | iOS App | SwiftUI (Swift 6) |
 
 ---
@@ -95,7 +97,7 @@ giftitbackend/
 │   │   ├── rateLimiter.js     # Rate limiting
 │   │   └── upload.js          # File upload (Multer + S3)
 │   ├── models/
-│   │   ├── User.js            # User schema
+│   │   ├── User.js            # User schema (with mustChangePassword)
 │   │   ├── GiftCard.js        # Gift card catalog
 │   │   ├── GiftCardPurchase.js# Purchase records
 │   │   ├── Transaction.js     # Financial transactions
@@ -106,7 +108,7 @@ giftitbackend/
 │   ├── routes/
 │   │   ├── auth.js            # Authentication routes
 │   │   ├── user.js            # User management
-│   │   ├── giftcard.js        # Gift card browsing
+│   │   ├── giftcard.js        # Gift card browsing & purchases
 │   │   ├── subscription.js    # Subscription management
 │   │   ├── business.js        # Business operations
 │   │   ├── campaign.js        # Campaign management
@@ -126,7 +128,7 @@ giftitbackend/
 │   │   └── admin/             # Admin operations
 │   ├── utils/
 │   │   ├── runaApi.js         # Runa API client
-│   │   ├── email.js           # Email templates/sending
+│   │   ├── email.js           # Resend email service
 │   │   ├── pushNotification.js# Firebase push
 │   │   └── helpers.js         # Utility functions
 │   ├── validators/            # Input validation
@@ -141,12 +143,12 @@ giftitbackend/
 ```env
 # Server
 NODE_ENV=development
-PORT=3000
-APP_URL=http://localhost:3000
+PORT=3002
+APP_URL=http://localhost:3002
 FRONTEND_URL=http://localhost:3001
 
 # MongoDB
-MONGODB_URI=mongodb://localhost:27017/giftit
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/giftit
 
 # JWT
 JWT_SECRET=your-jwt-secret
@@ -156,6 +158,7 @@ JWT_REFRESH_EXPIRES_IN=30d
 
 # Stripe
 STRIPE_SECRET_KEY=sk_test_xxx
+STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 
 # Runa API
@@ -173,12 +176,9 @@ FIREBASE_PROJECT_ID=xxx
 FIREBASE_PRIVATE_KEY=xxx
 FIREBASE_CLIENT_EMAIL=xxx
 
-# Email (SMTP)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=xxx
-SMTP_PASS=xxx
-EMAIL_FROM=noreply@giftit.com
+# Resend Email
+RESEND_API_KEY=re_xxx
+EMAIL_FROM=noreply@yourdomain.com
 ```
 
 ---
@@ -193,10 +193,10 @@ GiftIt/
 ├── ContentView.swift          # Root view controller
 ├── Models/
 │   ├── AuthManager.swift      # Authentication state
-│   └── MockData.swift         # Data models & mock data
+│   └── MockData.swift         # Data models
 ├── Views/
 │   ├── Auth/
-│   │   └── AuthView.swift     # Login, SignUp, ForgotPassword
+│   │   └── LoginView.swift    # Login, SignUp, ForgotPassword, ChangePassword
 │   ├── Home/
 │   │   └── HomeView.swift     # Home tab with featured cards
 │   ├── Browse/
@@ -214,8 +214,32 @@ GiftIt/
 ├── Utils/
 │   └── Theme.swift            # Colors, typography, spacing
 └── Services/
-    └── APIConfig.swift        # API configuration
+    ├── APIConfig.swift        # API configuration
+    ├── AuthService.swift      # Authentication API calls
+    ├── GiftCardService.swift  # Gift card API calls
+    ├── PurchaseService.swift  # Purchase API calls
+    └── ProfileService.swift   # Profile/wallet API calls
 ```
+
+### iOS Services
+
+#### AuthService
+- `register(email:password:firstName:lastName:)` - Register new user
+- `login(email:password:)` - Login, returns `mustChangePassword` flag
+- `forgotPassword(email:)` - Request temp password via email
+- `forceChangePassword(currentPassword:newPassword:)` - Change password after temp login
+
+#### PurchaseService
+- `getMyPurchases()` - Get user's purchase history
+- `createPurchase(giftCardId:amount:...)` - Purchase gift card with wallet
+- `getReceivedGiftCards()` - Get gifts received from others
+- `getPurchaseDetails(purchaseId:)` - Get single purchase details
+
+#### ProfileService
+- `updateProfile(firstName:lastName:phone:)` - Update user profile
+- `addWalletFunds(amount:)` - Add funds to wallet (test endpoint)
+- `deleteAccount()` - Delete user account
+- `getWalletBalance()` - Get current wallet balance
 
 ### App Architecture
 
@@ -278,6 +302,8 @@ struct AppTheme {
   role: 'user' | 'business' | 'admin' | 'superadmin',
   isEmailVerified: Boolean,
   isActive: Boolean,
+  mustChangePassword: Boolean, // True after temp password login
+  tempPassword: String,        // Hashed temp password
   wallet: {
     balance: Number,
     currency: String
@@ -308,7 +334,7 @@ struct AppTheme {
   name: String,
   description: String,
   image: String,
-  category: 'retail' | 'restaurants' | 'coffee' | 'entertainment' | ...,
+  category: 'retail' | 'restaurants' | 'entertainment' | 'travel' | 'sports' | 'other',
   priceType: 'fixed' | 'variable',
   fixedAmounts: [Number],     // For fixed price cards
   minAmount: Number,          // For variable cards
@@ -409,101 +435,6 @@ struct AppTheme {
 }
 ```
 
-### Business Model
-```javascript
-{
-  name: String,
-  slug: String,
-  email: String,
-  phone: String,
-  website: String,
-  logo: String,
-  description: String,
-  industry: 'technology' | 'finance' | 'retail' | ...,
-  size: '1-10' | '11-50' | '51-200' | ...,
-  address: { street, city, state, zipCode, country },
-
-  ownerId: ObjectId,
-  admins: [ObjectId],
-  employees: [{
-    userId: ObjectId,
-    department: String,
-    position: String,
-    status: 'active' | 'inactive' | 'pending'
-  }],
-
-  stripeCustomerId: String,
-  billing: {
-    plan: 'free' | 'starter' | 'professional' | 'enterprise',
-    stripeSubscriptionId: String
-  },
-
-  budget: {
-    monthly: Number,
-    spent: Number,
-    lastResetDate: Date
-  },
-
-  settings: {
-    allowEmployeePurchases: Boolean,
-    requireApproval: Boolean,
-    maxGiftCardValue: Number
-  },
-
-  isVerified: Boolean,
-  isActive: Boolean
-}
-```
-
-### Campaign Model
-```javascript
-{
-  businessId: ObjectId,
-  createdBy: ObjectId,
-  name: String,
-  description: String,
-  type: 'birthday' | 'holiday' | 'anniversary' | 'recognition' |
-        'milestone' | 'onboarding' | 'custom',
-
-  giftCardId: ObjectId,
-  amount: Number,
-  personalMessage: String,
-
-  recipientType: 'all_employees' | 'department' | 'custom_list' | 'csv_upload',
-  recipients: [{
-    userId: ObjectId,
-    email: String,
-    name: String,
-    status: 'pending' | 'sent' | 'delivered' | 'failed' | 'redeemed',
-    purchaseId: ObjectId,
-    sentAt: Date
-  }],
-
-  scheduleType: 'immediate' | 'scheduled' | 'recurring',
-  scheduledDate: Date,
-  recurring: {
-    frequency: 'monthly' | 'quarterly' | 'annually',
-    dayOfMonth: Number,
-    nextOccurrence: Date
-  },
-
-  budget: { total, spent, perRecipient },
-  status: 'draft' | 'scheduled' | 'active' | 'paused' | 'completed' | 'cancelled',
-
-  stats: {
-    totalRecipients: Number,
-    sentCount: Number,
-    deliveredCount: Number,
-    failedCount: Number,
-    redeemedCount: Number,
-    totalAmountSent: Number
-  },
-
-  requiresApproval: Boolean,
-  approvalStatus: 'pending' | 'approved' | 'rejected'
-}
-```
-
 ---
 
 ## API Endpoints
@@ -512,10 +443,11 @@ struct AppTheme {
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/register` | Register new user |
-| POST | `/login` | Login with email/password |
+| POST | `/login` | Login with email/password (returns `mustChangePassword` flag) |
 | POST | `/refresh-token` | Refresh access token |
-| POST | `/forgot-password` | Request password reset |
-| POST | `/reset-password/:token` | Reset password |
+| POST | `/forgot-password` | Send temp password via email |
+| POST | `/force-change-password` | Change password after temp password login |
+| POST | `/reset-password/:token` | Reset password with token |
 | POST | `/verify-email/:token` | Verify email address |
 | POST | `/resend-verification` | Resend verification email |
 | POST | `/change-password` | Change password (authenticated) |
@@ -527,32 +459,35 @@ struct AppTheme {
 |--------|----------|-------------|
 | GET | `/profile` | Get user profile |
 | PUT | `/profile` | Update profile |
-| PUT | `/avatar` | Upload avatar |
+| POST | `/avatar` | Upload avatar |
 | DELETE | `/avatar` | Remove avatar |
 | GET | `/wallet` | Get wallet balance |
-| POST | `/wallet/add-funds` | Add funds to wallet |
+| POST | `/wallet/add` | Add funds to wallet (test endpoint, $1-$1000) |
+| POST | `/wallet/credit` | Add funds via Stripe payment |
 | GET | `/payment-methods` | List payment methods |
 | POST | `/payment-methods` | Add payment method |
 | DELETE | `/payment-methods/:id` | Remove payment method |
+| PUT | `/payment-methods/:id/default` | Set default payment method |
 | PUT | `/preferences` | Update preferences |
 | POST | `/device-token` | Register device token |
 | DELETE | `/device-token` | Remove device token |
+| POST | `/deactivate` | Deactivate account |
+| DELETE | `/account` | Delete account permanently |
 
 ### Gift Cards (`/api/v1/gift-cards`)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/` | List all gift cards |
-| GET | `/search` | Search gift cards |
-| GET | `/categories` | Get all categories |
+| GET | `/` | List all gift cards (supports pagination, filters) |
+| GET | `/categories` | Get all categories with counts |
 | GET | `/featured` | Get featured cards |
 | GET | `/popular` | Get popular cards |
 | GET | `/category/:category` | Get cards by category |
+| GET | `/received` | Get received gift cards |
 | GET | `/:id` | Get card details |
 | POST | `/purchase` | Purchase gift card |
-| GET | `/purchases` | Get user purchases |
+| GET | `/purchases/my` | Get user's purchases |
 | GET | `/purchases/:id` | Get purchase details |
-| GET | `/received` | Get received gift cards |
-| PUT | `/purchases/:id/balance` | Update balance tracking |
+| POST | `/purchases/:id/track-balance` | Update balance tracking |
 | POST | `/purchases/:id/cancel` | Cancel purchase |
 
 ### Subscriptions (`/api/v1/subscriptions`)
@@ -633,20 +568,21 @@ struct AppTheme {
 
 **Base URL**: `https://api.runa.io/v2` (production) or `https://playground.runa.io/v2` (sandbox)
 
-**Authentication**: API Key via `X-Api-Key` header
+**Authentication**: API Key via `Authorization: Bearer {key}` header
 
 **Key Operations**:
-- `GET /product` - Get gift card catalog
+- `GET /products` - Get gift card catalog (921+ cards)
 - `POST /orders` - Create order (purchase)
 - `GET /orders/:id` - Get order status
-- `GET /orders/:id/codes` - Get redemption codes
 - `POST /orders/:id/cancel` - Cancel order
 - `GET /account/balance` - Check account balance
 
-**Webhook Events**:
-- `order.completed` - Order fulfilled
-- `order.failed` - Order failed
-- `order.delivered` - Gift card delivered
+**Categories Available**:
+- other (515 cards)
+- restaurants (225 cards)
+- entertainment (105 cards)
+- travel (58 cards)
+- sports (18 cards)
 
 ### Stripe (Payments)
 
@@ -660,6 +596,23 @@ struct AppTheme {
 - `payment_intent.succeeded`
 - `payment_intent.payment_failed`
 - `customer.subscription.updated`
+
+### Resend (Email Service)
+
+**Key Features**:
+- Transactional emails
+- HTML email templates
+- Delivery tracking
+
+**Email Types Sent**:
+- Welcome email (on registration)
+- Email verification
+- Password reset (temp password)
+- Password changed confirmation
+- Gift card received notification
+- Purchase confirmation
+
+**Configuration Note**: Resend requires domain verification to send to recipients other than the account owner. Verify your domain at resend.com/domains.
 
 ### Firebase (Push Notifications)
 
@@ -702,6 +655,19 @@ struct AppTheme {
 }
 ```
 
+### Password Reset Flow
+
+1. User requests password reset via `/auth/forgot-password`
+2. Backend generates 16-character alphanumeric temp password
+3. Temp password is hashed and stored in `user.tempPassword`
+4. `user.mustChangePassword` is set to `true`
+5. Email is sent with temp password via Resend
+6. User logs in with temp password
+7. Login response includes `mustChangePassword: true`
+8. iOS app shows ChangePasswordView
+9. User calls `/auth/force-change-password` with current (temp) and new password
+10. Password is updated, `mustChangePassword` set to `false`
+
 ### Security Features
 
 1. **Password Hashing**: bcrypt with 12 salt rounds
@@ -741,10 +707,11 @@ struct AppTheme {
    - Tap "Continue to Payment"
 4. CheckoutView
    - View order summary
-   - Select payment method (Visa, Apple Pay, Wallet)
-   - View price breakdown
+   - Shows wallet balance
+   - Validates sufficient funds
    - Tap "Pay $X.XX"
-   - Show processing animation
+   - Calls PurchaseService.createPurchase()
+   - Deducts from wallet balance
 5. PurchaseSuccessView
    - Checkmark animation
    - Card preview
@@ -759,10 +726,37 @@ struct AppTheme {
 3. If not logged in → LoginView
    - Email/password fields
    - "Sign In" button (loading state)
-   - "Forgot Password?" link
-   - "Sign Up" link
-4. If logged in → MainTabView
+   - "Forgot Password?" link → ForgotPasswordView
+   - "Sign Up" link → SignUpView
+4. If login returns mustChangePassword=true → ChangePasswordView
+   - Current password (temp password from email)
+   - New password
+   - Confirm new password
+   - "Change Password" button
+5. If logged in → MainTabView
    - Home, Browse, Wallet, Profile tabs
+```
+
+### Forgot Password Flow
+
+```
+1. LoginView → Tap "Forgot Password?"
+2. ForgotPasswordView
+   - Enter email address
+   - Tap "Send Reset Email"
+   - Backend generates temp password
+   - Email sent via Resend with temp password
+3. User receives email with temp password
+4. User returns to LoginView
+   - Enter email
+   - Enter temp password from email
+   - Tap "Sign In"
+5. Login succeeds with mustChangePassword=true
+6. ChangePasswordView appears
+   - Enter temp password as current password
+   - Enter new password
+   - Confirm new password
+7. Password changed, user proceeds to app
 ```
 
 ### Gift Card Redemption Flow
@@ -818,9 +812,9 @@ struct AppTheme {
 
 ---
 
-## Running the System
+## Configuration & Setup
 
-### Backend
+### Backend Setup
 
 ```bash
 # Install dependencies
@@ -831,26 +825,47 @@ npm install
 cp .env.example .env
 # Edit .env with your credentials
 
+# Required environment variables:
+# - MONGODB_URI (MongoDB connection string)
+# - JWT_SECRET (Random secure string)
+# - RESEND_API_KEY (from resend.com)
+# - RUNA_API_KEY (from runa.io)
+# - STRIPE_SECRET_KEY (from stripe.com) - optional for wallet-only payments
+
 # Sync gift cards from Runa
 npm run sync-giftcards
 
 # Start development server
-npm run dev
+npm run dev    # Runs on port 3002
 
 # Start production server
 npm start
 ```
 
-### iOS App
+### iOS App Setup
 
 ```bash
 # Open in Xcode
 cd GiftIt
 open GiftIt.xcodeproj
 
+# Update API configuration in Services/APIConfig.swift
+# Default: http://localhost:3002/api/v1
+
 # Build and run on simulator
 # Or connect device and run
 ```
+
+### Configuration Checklist
+
+- [ ] MongoDB Atlas connection string configured
+- [ ] MongoDB IP whitelist set (0.0.0.0/0 for development)
+- [ ] Resend API key added
+- [ ] Resend domain verified (for production emails)
+- [ ] Runa API key added
+- [ ] Stripe keys added (optional - wallet payments work without)
+- [ ] AWS S3 credentials added (for avatar uploads)
+- [ ] Firebase credentials added (for push notifications)
 
 ---
 
@@ -869,11 +884,11 @@ open GiftIt.xcodeproj
 ```json
 {
   "success": false,
-  "error": {
-    "message": "Error description",
-    "code": "ERROR_CODE",
-    "details": { ... }
-  }
+  "message": "Error description",
+  "code": "ERROR_CODE",
+  "errors": [
+    { "field": "email", "message": "Invalid email format" }
+  ]
 }
 ```
 
@@ -881,15 +896,32 @@ open GiftIt.xcodeproj
 ```json
 {
   "success": true,
-  "data": [ ... ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 100,
-    "pages": 5
+  "data": {
+    "items": [ ... ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 100,
+      "pages": 5
+    }
   }
 }
 ```
+
+---
+
+## Tested Endpoints (Edge Testing Results)
+
+All endpoints have been tested and verified working:
+
+| Category | Endpoints | Status |
+|----------|-----------|--------|
+| Health | `/health` | ✅ Working |
+| Auth | Register, Login, Forgot Password, Force Change Password | ✅ Working |
+| User | Profile CRUD, Wallet, Delete Account | ✅ Working |
+| Gift Cards | List, Categories, Featured, Popular, Search | ✅ Working |
+| Purchases | Create, List My, List Received | ✅ Working |
+| Validation | Missing auth, Invalid token, Invalid input | ✅ Properly rejected |
 
 ---
 
@@ -898,4 +930,5 @@ open GiftIt.xcodeproj
 - **Backend Version**: 1.0.0
 - **iOS App Version**: 1.0.0
 - **API Version**: v1
-- **Last Updated**: December 21, 2025
+- **Last Updated**: January 27, 2026
+ 

@@ -354,4 +354,188 @@ router.get(
   })
 );
 
+// ==================== TRANSACTIONS ====================
+
+router.get(
+  '/:businessId/transactions',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const options = {
+      type: req.query.type,
+      status: req.query.status,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      page: parseInt(req.query.page) || 1,
+      limit: parseInt(req.query.limit) || 20,
+    };
+    const result = await businessService.getTransactions(
+      req.params.businessId,
+      req.userId,
+      options
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
+// ==================== INVOICES ====================
+
+router.get(
+  '/:businessId/invoices',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const options = {
+      page: parseInt(req.query.page) || 1,
+      limit: parseInt(req.query.limit) || 20,
+      status: req.query.status,
+    };
+    const result = await businessService.getInvoices(
+      req.params.businessId,
+      req.userId,
+      options
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
+router.get(
+  '/:businessId/invoices/:invoiceId',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const invoice = await businessService.getInvoiceById(
+      req.params.businessId,
+      req.userId,
+      req.params.invoiceId
+    );
+    res.json({
+      success: true,
+      data: { invoice },
+    });
+  })
+);
+
+// ==================== PAYMENT METHODS ====================
+
+router.get(
+  '/:businessId/payment-methods',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await businessService.getPaymentMethods(
+      req.params.businessId,
+      req.userId
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
+router.post(
+  '/:businessId/payment-methods',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await businessService.addPaymentMethod(
+      req.params.businessId,
+      req.userId,
+      req.body.paymentMethodId
+    );
+    res.json({
+      success: true,
+      ...result,
+    });
+  })
+);
+
+router.delete(
+  '/:businessId/payment-methods/:paymentMethodId',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await businessService.removePaymentMethod(
+      req.params.businessId,
+      req.userId,
+      req.params.paymentMethodId
+    );
+    res.json({
+      success: true,
+      ...result,
+    });
+  })
+);
+
+router.put(
+  '/:businessId/payment-methods/:paymentMethodId/default',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await businessService.setDefaultPaymentMethod(
+      req.params.businessId,
+      req.userId,
+      req.params.paymentMethodId
+    );
+    res.json({
+      success: true,
+      ...result,
+    });
+  })
+);
+
+// ==================== RESEND EMPLOYEE INVITE ====================
+
+router.post(
+  '/:businessId/employees/:employeeId/resend-invite',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await businessService.resendEmployeeInvite(
+      req.params.businessId,
+      req.userId,
+      req.params.employeeId
+    );
+    res.json({
+      success: true,
+      ...result,
+    });
+  })
+);
+
+// ==================== QUICK SEND GIFT ====================
+
+router.post(
+  '/:businessId/send-gift',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await businessService.sendQuickGift(
+      req.params.businessId,
+      req.userId,
+      req.body
+    );
+    res.json({
+      success: true,
+      ...result,
+    });
+  })
+);
+
 module.exports = router;

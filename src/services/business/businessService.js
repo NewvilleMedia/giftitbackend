@@ -2,10 +2,14 @@ const Business = require('../../models/Business');
 const User = require('../../models/User');
 const Campaign = require('../../models/Campaign');
 const Transaction = require('../../models/Transaction');
+const GiftCard = require('../../models/GiftCard');
+const GiftCardPurchase = require('../../models/GiftCardPurchase');
 const { uploadToS3, deleteFromS3 } = require('../../config/aws');
+const { stripe } = require('../../config/stripe');
 const { createCustomer } = require('../../config/stripe');
 const { sendEmail } = require('../../utils/email');
 const { parseCSV } = require('../../utils/helpers');
+const giftCardService = require('../giftcard');
 
 class BusinessService {
   // Create business
@@ -469,6 +473,461 @@ class BusinessService {
     )];
 
     return departments;
+  }
+
+  // ==================== TRANSACTIONS ====================
+
+  async getTransactions(businessId, userId, options = {}) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    const { type, status, startDate, endDate, page = 1, limit = 20 } = options;
+
+    const filter = { businessId: business._id };
+
+    if (type) filter.type = type;
+    if (status) filter.status = status;
+    if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(startDate);
+      if (endDate) filter.createdAt.$lte = new Date(endDate);
+    }
+
+    const transactions = await Transaction.find(filter)
+      .populate('userId', 'firstName lastName email')
+      .populate('purchaseId')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    const total = await Transaction.countDocuments(filter);
+
+    // Calculate summary
+    const summary = await Transaction.aggregate([
+      { $match: { businessId: business._id, status: 'completed' } },
+      {
+        $group: {
+          _id: '$type',
+          total: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    return {
+      transactions,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      summary,
+    };
+  }
+
+  // ==================== INVOICES ====================
+
+  async getInvoices(businessId, userId, options = {}) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    if (!business.stripeCustomerId) {
+      return { invoices: [], pagination: { page: 1, limit: 20, total: 0, pages: 0 } };
+    }
+
+    const { page = 1, limit = 20, status } = options;
+
+    try {
+      const params = {
+        customer: business.stripeCustomerId,
+        limit: limit,
+      };
+
+      if (status) {
+        params.status = status;
+      }
+
+      const stripeInvoices = await stripe.invoices.list(params);
+
+      const invoices = stripeInvoices.data.map((invoice) => ({
+        id: invoice.id,
+        number: invoice.number,
+        status: invoice.status,
+        amount: invoice.amount_due / 100,
+        amountPaid: invoice.amount_paid / 100,
+        currency: invoice.currency.toUpperCase(),
+        dueDate: invoice.due_date ? new Date(invoice.due_date * 1000) : null,
+        createdAt: new Date(invoice.created * 1000),
+        paidAt: invoice.status_transitions?.paid_at
+          ? new Date(invoice.status_transitions.paid_at * 1000)
+          : null,
+        hostedInvoiceUrl: invoice.hosted_invoice_url,
+        invoicePdf: invoice.invoice_pdf,
+        description: invoice.description,
+        lines: invoice.lines?.data?.map((line) => ({
+          description: line.description,
+          amount: line.amount / 100,
+          quantity: line.quantity,
+        })),
+      }));
+
+      return {
+        invoices,
+        pagination: {
+          page,
+          limit,
+          total: stripeInvoices.data.length,
+          hasMore: stripeInvoices.has_more,
+        },
+      };
+    } catch (error) {
+      console.error('Error fetching Stripe invoices:', error);
+      return { invoices: [], pagination: { page: 1, limit: 20, total: 0, pages: 0 } };
+    }
+  }
+
+  async getInvoiceById(businessId, userId, invoiceId) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    try {
+      const invoice = await stripe.invoices.retrieve(invoiceId);
+
+      // Verify the invoice belongs to this business
+      if (invoice.customer !== business.stripeCustomerId) {
+        throw new Error('Invoice not found');
+      }
+
+      return {
+        id: invoice.id,
+        number: invoice.number,
+        status: invoice.status,
+        amount: invoice.amount_due / 100,
+        amountPaid: invoice.amount_paid / 100,
+        currency: invoice.currency.toUpperCase(),
+        dueDate: invoice.due_date ? new Date(invoice.due_date * 1000) : null,
+        createdAt: new Date(invoice.created * 1000),
+        paidAt: invoice.status_transitions?.paid_at
+          ? new Date(invoice.status_transitions.paid_at * 1000)
+          : null,
+        hostedInvoiceUrl: invoice.hosted_invoice_url,
+        invoicePdf: invoice.invoice_pdf,
+        description: invoice.description,
+        lines: invoice.lines?.data?.map((line) => ({
+          description: line.description,
+          amount: line.amount / 100,
+          quantity: line.quantity,
+        })),
+      };
+    } catch (error) {
+      throw new Error('Invoice not found');
+    }
+  }
+
+  // ==================== PAYMENT METHODS ====================
+
+  async getPaymentMethods(businessId, userId) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    if (!business.stripeCustomerId) {
+      return { paymentMethods: [], defaultPaymentMethodId: null };
+    }
+
+    try {
+      const paymentMethods = await stripe.paymentMethods.list({
+        customer: business.stripeCustomerId,
+        type: 'card',
+      });
+
+      // Get the customer to find default payment method
+      const customer = await stripe.customers.retrieve(business.stripeCustomerId);
+      const defaultPaymentMethodId = customer.invoice_settings?.default_payment_method;
+
+      return {
+        paymentMethods: paymentMethods.data.map((pm) => ({
+          id: pm.id,
+          brand: pm.card.brand,
+          last4: pm.card.last4,
+          expMonth: pm.card.exp_month,
+          expYear: pm.card.exp_year,
+          isDefault: pm.id === defaultPaymentMethodId,
+        })),
+        defaultPaymentMethodId,
+      };
+    } catch (error) {
+      console.error('Error fetching payment methods:', error);
+      return { paymentMethods: [], defaultPaymentMethodId: null };
+    }
+  }
+
+  async addPaymentMethod(businessId, userId, paymentMethodId) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    // Create Stripe customer if doesn't exist
+    if (!business.stripeCustomerId) {
+      const customer = await stripe.customers.create({
+        email: business.email,
+        name: business.name,
+        metadata: { businessId: businessId.toString() },
+      });
+      business.stripeCustomerId = customer.id;
+      await business.save();
+    }
+
+    // Attach payment method to customer
+    await stripe.paymentMethods.attach(paymentMethodId, {
+      customer: business.stripeCustomerId,
+    });
+
+    // If this is the first payment method, set it as default
+    const paymentMethods = await stripe.paymentMethods.list({
+      customer: business.stripeCustomerId,
+      type: 'card',
+    });
+
+    if (paymentMethods.data.length === 1) {
+      await stripe.customers.update(business.stripeCustomerId, {
+        invoice_settings: { default_payment_method: paymentMethodId },
+      });
+      business.billing = business.billing || {};
+      business.billing.paymentMethodId = paymentMethodId;
+      await business.save();
+    }
+
+    return { message: 'Payment method added successfully' };
+  }
+
+  async removePaymentMethod(businessId, userId, paymentMethodId) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    try {
+      // Detach payment method
+      await stripe.paymentMethods.detach(paymentMethodId);
+
+      // If this was the default, clear it
+      if (business.billing?.paymentMethodId === paymentMethodId) {
+        business.billing.paymentMethodId = null;
+        await business.save();
+      }
+
+      return { message: 'Payment method removed successfully' };
+    } catch (error) {
+      throw new Error('Failed to remove payment method');
+    }
+  }
+
+  async setDefaultPaymentMethod(businessId, userId, paymentMethodId) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    if (!business.stripeCustomerId) {
+      throw new Error('No Stripe customer found');
+    }
+
+    // Update default payment method in Stripe
+    await stripe.customers.update(business.stripeCustomerId, {
+      invoice_settings: { default_payment_method: paymentMethodId },
+    });
+
+    // Update in our database
+    business.billing = business.billing || {};
+    business.billing.paymentMethodId = paymentMethodId;
+    await business.save();
+
+    return { message: 'Default payment method updated' };
+  }
+
+  // ==================== EMPLOYEE INVITE ====================
+
+  async resendEmployeeInvite(businessId, userId, employeeId) {
+    const business = await Business.findById(businessId)
+      .populate('employees.userId', 'firstName lastName email');
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    const employee = business.employees.find(
+      (emp) => emp.userId._id.toString() === employeeId.toString()
+    );
+
+    if (!employee) {
+      throw new Error('Employee not found');
+    }
+
+    const user = employee.userId;
+
+    // Generate a temporary password for the employee
+    const tempPassword = Math.random().toString(36).slice(-12);
+    const userDoc = await User.findById(employeeId);
+    userDoc.password = tempPassword;
+    userDoc.mustChangePassword = true;
+    await userDoc.save();
+
+    // Send invitation email
+    await sendEmail(user.email, 'employeeInvite', {
+      firstName: user.firstName,
+      businessName: business.name,
+      tempPassword,
+      loginUrl: `${process.env.FRONTEND_URL}/login`,
+    });
+
+    return { message: 'Invitation sent successfully' };
+  }
+
+  // ==================== QUICK SEND GIFT ====================
+
+  async sendQuickGift(businessId, userId, giftData) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    const {
+      employeeId,
+      recipientEmail,
+      recipientName,
+      giftCardId,
+      amount,
+      personalMessage,
+    } = giftData;
+
+    // Validate gift card
+    const giftCard = await GiftCard.findById(giftCardId);
+    if (!giftCard) {
+      throw new Error('Gift card not found');
+    }
+
+    // Validate amount
+    if (giftCard.priceType === 'fixed') {
+      if (!giftCard.fixedAmounts.includes(amount)) {
+        throw new Error('Invalid amount for this gift card');
+      }
+    } else {
+      if (amount < giftCard.minAmount || amount > giftCard.maxAmount) {
+        throw new Error(`Amount must be between $${giftCard.minAmount} and $${giftCard.maxAmount}`);
+      }
+    }
+
+    // Check business budget
+    if (business.budget.monthly > 0) {
+      const remainingBudget = business.budget.monthly - business.budget.spent;
+      if (amount > remainingBudget) {
+        throw new Error('Insufficient budget');
+      }
+    }
+
+    // If employeeId provided, get employee details
+    let recipientInfo = { email: recipientEmail, name: recipientName };
+    if (employeeId) {
+      const employee = business.employees.find(
+        (emp) => emp.userId.toString() === employeeId.toString()
+      );
+      if (employee) {
+        const empUser = await User.findById(employeeId);
+        if (empUser) {
+          recipientInfo = {
+            email: empUser.email,
+            name: `${empUser.firstName} ${empUser.lastName}`,
+          };
+        }
+      }
+    }
+
+    // Create the purchase
+    const purchaseData = {
+      giftCardId,
+      amount,
+      recipientType: 'gift',
+      recipientEmail: recipientInfo.email,
+      recipientName: recipientInfo.name,
+      personalMessage: personalMessage || `A gift from ${business.name}`,
+      deliveryMethod: 'email',
+      paymentMethodId: 'business_account',
+      businessId: business._id,
+    };
+
+    const result = await giftCardService.purchaseGiftCard(userId, purchaseData);
+
+    // Update business spending
+    business.budget.spent += amount;
+    await business.save();
+
+    // Create transaction record
+    await Transaction.create({
+      userId,
+      businessId: business._id,
+      type: 'purchase',
+      amount,
+      currency: 'USD',
+      status: 'completed',
+      paymentProvider: 'business_account',
+      purchaseId: result.purchase._id,
+      description: `Quick gift to ${recipientInfo.name} (${recipientInfo.email})`,
+    });
+
+    return {
+      message: 'Gift sent successfully',
+      purchase: result.purchase,
+      recipient: recipientInfo,
+    };
   }
 }
 

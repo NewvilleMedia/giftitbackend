@@ -151,6 +151,111 @@ const templates = {
       </div>
     `,
   }),
+
+  accountBanned: (data) => ({
+    subject: `Account Suspended - ${process.env.APP_NAME}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #FF3B30;">Account Suspended</h1>
+        <p>Hi ${data.firstName},</p>
+        <p>Your ${process.env.APP_NAME} account has been suspended.</p>
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <p style="margin: 0;"><strong>Reason:</strong> ${data.reason}</p>
+        </div>
+        <p>If you believe this was a mistake, please contact our support team.</p>
+        <a href="mailto:${process.env.SUPPORT_EMAIL || 'support@giftit.com'}" style="display: inline-block; background-color: #666; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px;">Contact Support</a>
+      </div>
+    `,
+  }),
+
+  accountUnbanned: (data) => ({
+    subject: `Account Reinstated - ${process.env.APP_NAME}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #00D632;">Account Reinstated</h1>
+        <p>Hi ${data.firstName},</p>
+        <p>Great news! Your ${process.env.APP_NAME} account has been reinstated.</p>
+        <p>You can now log in and continue using all features.</p>
+        <a href="${process.env.FRONTEND_URL}/login" style="display: inline-block; background-color: #00D632; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px;">Log In</a>
+      </div>
+    `,
+  }),
+
+  businessSuspended: (data) => ({
+    subject: `Business Account Suspended - ${process.env.APP_NAME}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #FF3B30;">Business Account Suspended</h1>
+        <p>Hi ${data.firstName},</p>
+        <p>Your business account <strong>${data.businessName}</strong> has been suspended.</p>
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <p style="margin: 0;"><strong>Reason:</strong> ${data.reason}</p>
+        </div>
+        <p>All active campaigns have been paused. If you believe this was a mistake, please contact our support team.</p>
+        <a href="mailto:${process.env.SUPPORT_EMAIL || 'support@giftit.com'}" style="display: inline-block; background-color: #666; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px;">Contact Support</a>
+      </div>
+    `,
+  }),
+
+  businessUnsuspended: (data) => ({
+    subject: `Business Account Reinstated - ${process.env.APP_NAME}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #00D632;">Business Account Reinstated</h1>
+        <p>Hi ${data.firstName},</p>
+        <p>Great news! Your business account <strong>${data.businessName}</strong> has been reinstated.</p>
+        <p>You can now access your dashboard and resume your campaigns.</p>
+        <a href="${process.env.ADMIN_URL}" style="display: inline-block; background-color: #00D632; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px;">Go to Dashboard</a>
+      </div>
+    `,
+  }),
+
+  refundProcessed: (data) => ({
+    subject: `Refund Processed - ${process.env.APP_NAME}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #00D632;">Refund Processed</h1>
+        <p>Hi ${data.firstName},</p>
+        <p>Your refund has been processed successfully.</p>
+        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <p style="margin: 0;"><strong>Amount:</strong> $${data.amount} ${data.currency}</p>
+          <p style="margin: 10px 0 0 0;"><strong>Reason:</strong> ${data.reason}</p>
+        </div>
+        <p>The funds will be returned to your original payment method within 5-10 business days.</p>
+        <p style="color: #666;">If you have any questions, please contact our support team.</p>
+      </div>
+    `,
+  }),
+
+  employeeInvite: (data) => ({
+    subject: `You've been invited to ${data.businessName} on ${process.env.APP_NAME}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #00D632;">You're Invited!</h1>
+        <p>Hi ${data.firstName},</p>
+        <p>You've been added as an employee of <strong>${data.businessName}</strong> on ${process.env.APP_NAME}.</p>
+        <p>Use the temporary password below to log in:</p>
+        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+          <span style="font-size: 24px; font-weight: bold; letter-spacing: 4px; color: #333;">${data.tempPassword}</span>
+        </div>
+        <p style="color: #666;">You'll be asked to change your password after logging in.</p>
+        <a href="${data.loginUrl}" style="display: inline-block; background-color: #00D632; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px;">Log In Now</a>
+      </div>
+    `,
+  }),
+
+  promotional: (data) => ({
+    subject: `${data.title} - ${process.env.APP_NAME}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #00D632;">${data.title}</h1>
+        <p>Hi ${data.firstName},</p>
+        <p>${data.message}</p>
+        <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background-color: #00D632; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px;">Visit ${process.env.APP_NAME}</a>
+        <p style="margin-top: 30px; color: #666; font-size: 12px;">You received this email because you're subscribed to ${process.env.APP_NAME} updates. <a href="${process.env.FRONTEND_URL}/unsubscribe">Unsubscribe</a></p>
+      </div>
+    `,
+  }),
 };
 
 // Send email function using Resend

@@ -6,6 +6,9 @@ const Subscription = require('./Subscription');
 const Transaction = require('./Transaction');
 const Campaign = require('./Campaign');
 const Notification = require('./Notification');
+const AuditLog = require('./AuditLog');
+const PromoCode = require('./PromoCode');
+const SystemSettings = require('./SystemSettings');
 
 module.exports = {
   User,
@@ -16,4 +19,7 @@ module.exports = {
   Transaction,
   Campaign,
   Notification,
+  AuditLog,
+  PromoCode,
+  SystemSettings,
 };
