@@ -177,6 +177,14 @@ const giftCardPurchaseSchema = new mongoose.Schema(
     refundAmount: Number,
     refundReason: String,
 
+    // Claim code for recipients to claim via app
+    claimCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+
     // Notes and metadata
     notes: String,
     metadata: {

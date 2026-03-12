@@ -427,6 +427,24 @@ router.get(
 
 // ==================== PAYMENT METHODS ====================
 
+// Create a SetupIntent for adding a new card via Stripe Elements
+router.post(
+  '/:businessId/setup-intent',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await businessService.createSetupIntent(
+      req.params.businessId,
+      req.userId
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
 router.get(
   '/:businessId/payment-methods',
   authenticate,

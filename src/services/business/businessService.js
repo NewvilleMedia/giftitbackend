@@ -11,6 +11,27 @@ const { sendEmail } = require('../../utils/email');
 const { parseCSV } = require('../../utils/helpers');
 const giftCardService = require('../giftcard');
 
+// Generate a unique, human-readable claim code like "GIFT-A3X9"
+async function generateClaimCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Excludes I, O, 0, 1 for readability
+  const maxRetries = 10;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let code = 'GIFT-';
+    for (let i = 0; i < 4; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    // Check for uniqueness
+    const existing = await GiftCardPurchase.findOne({ claimCode: code });
+    if (!existing) {
+      return code;
+    }
+  }
+
+  throw new Error('Failed to generate unique claim code after multiple attempts');
+}
+
 class BusinessService {
   // Create business
   async createBusiness(ownerId, businessData) {
@@ -685,6 +706,39 @@ class BusinessService {
     }
   }
 
+  async createSetupIntent(businessId, userId) {
+    const business = await Business.findById(businessId);
+
+    if (!business) {
+      throw new Error('Business not found');
+    }
+
+    if (!business.isAdmin(userId)) {
+      throw new Error('Access denied');
+    }
+
+    // Create Stripe customer if doesn't exist
+    if (!business.stripeCustomerId) {
+      const customer = await stripe.customers.create({
+        email: business.email,
+        name: business.name,
+        metadata: { businessId: businessId.toString() },
+      });
+      business.stripeCustomerId = customer.id;
+      await business.save();
+    }
+
+    const setupIntent = await stripe.setupIntents.create({
+      customer: business.stripeCustomerId,
+      payment_method_types: ['card'],
+    });
+
+    return {
+      clientSecret: setupIntent.client_secret,
+      customerId: business.stripeCustomerId,
+    };
+  }
+
   async addPaymentMethod(businessId, userId, paymentMethodId) {
     const business = await Business.findById(businessId);
 
@@ -906,6 +960,14 @@ class BusinessService {
 
     const result = await giftCardService.purchaseGiftCard(userId, purchaseData);
 
+    // Generate and save claim code on the purchase
+    const claimCode = await generateClaimCode();
+    const purchaseDoc = await GiftCardPurchase.findById(result.purchase.id);
+    if (purchaseDoc) {
+      purchaseDoc.claimCode = claimCode;
+      await purchaseDoc.save();
+    }
+
     // Update business spending
     business.budget.spent += amount;
     await business.save();
@@ -926,6 +988,7 @@ class BusinessService {
     return {
       message: 'Gift sent successfully',
       purchase: result.purchase,
+      claimCode,
       recipient: recipientInfo,
     };
   }

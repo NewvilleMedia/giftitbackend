@@ -346,6 +346,7 @@ class GiftCardService {
     // Send email to recipient
     if (purchase.recipientEmail) {
       const redeemUrl = `${process.env.FRONTEND_URL}/redeem/${purchase._id}`;
+      const firstCode = purchase.redemptionCodes?.[0];
 
       await sendEmail(purchase.recipientEmail, 'giftCardReceived', {
         recipientName: purchase.recipientName || 'there',
@@ -353,6 +354,9 @@ class GiftCardService {
         giftCardName: giftCard.name,
         amount: purchase.amount,
         personalMessage: purchase.personalMessage,
+        cardCode: firstCode?.code || '',
+        cardPin: firstCode?.pin || '',
+        claimCode: purchase.claimCode || null,
         redeemUrl,
       });
     }
