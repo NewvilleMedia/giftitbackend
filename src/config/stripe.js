@@ -137,6 +137,7 @@ const verifyWebhookSignature = (payload, signature) => {
 
 module.exports = {
   stripe,
+  checkStripeConfigured,
   createCustomer,
   getCustomer,
   updateCustomer,

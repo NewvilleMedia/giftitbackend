@@ -62,29 +62,25 @@ const templates = {
   }),
 
   giftCardReceived: (data) => ({
-    subject: `You received a gift card! - ${process.env.APP_NAME}`,
+    subject: `🎁 You received a gift card! - ${process.env.APP_NAME}`,
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h1 style="color: #00D632;">🎁 You've Got a Gift!</h1>
-        <p>Hi ${data.recipientName},</p>
-        <p><strong>${data.senderName}</strong> sent you a <strong>${data.giftCardName}</strong> gift card worth <strong>$${data.amount}</strong>!</p>
-        ${data.personalMessage ? `<p style="background-color: #f5f5f5; padding: 15px; border-radius: 8px; font-style: italic;">"${data.personalMessage}"</p>` : ''}
-        ${data.claimCode ? `
-        <div style="background-color: #00D632; padding: 24px; border-radius: 12px; margin: 24px 0; text-align: center;">
-          <p style="margin: 0 0 8px 0; color: white; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Your Claim Code</p>
-          <p style="margin: 0; font-size: 32px; font-weight: bold; letter-spacing: 4px; color: white;">${data.claimCode}</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="color: #00D632; margin: 0;">🎁 You've Got a Gift!</h1>
         </div>
-        <p style="text-align: center; color: #333; font-size: 14px;">Download <strong>${process.env.APP_NAME}</strong> and enter this code to claim your gift card.</p>
-        <div style="text-align: center; margin: 16px 0;">
-          <a href="giftit://claim/${data.claimCode}" style="display: inline-block; background-color: #333; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-size: 14px;">Open in App</a>
+        <p style="font-size: 16px; color: #333;">Hi ${data.recipientName},</p>
+        <p style="font-size: 16px; color: #333;"><strong>${data.senderName}</strong> sent you a <strong>${data.giftCardName}</strong> gift card worth <strong>$${data.amount}</strong>!</p>
+        ${data.personalMessage ? `<div style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #00D632;"><p style="margin: 0; font-style: italic; color: #555;">"${data.personalMessage}"</p></div>` : ''}
+        <div style="background-color: #00D632; padding: 32px 24px; border-radius: 12px; margin: 30px 0; text-align: center;">
+          <p style="margin: 0 0 8px 0; color: white; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Your Claim Code</p>
+          <p style="margin: 0; font-size: 36px; font-weight: bold; letter-spacing: 6px; color: white;">${data.claimCode || 'N/A'}</p>
         </div>
-        ` : ''}
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <p style="margin: 0;"><strong>Card Code:</strong> ${data.cardCode}</p>
-          ${data.cardPin ? `<p style="margin: 10px 0 0 0;"><strong>PIN:</strong> ${data.cardPin}</p>` : ''}
+        <div style="text-align: center; margin: 24px 0;">
+          <p style="color: #333; font-size: 16px; margin: 0 0 16px 0;">Download <strong>${process.env.APP_NAME}</strong> and enter this code to claim your gift card.</p>
+          <a href="giftit://claim/${data.claimCode || ''}" style="display: inline-block; background-color: #000; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: 600;">Open in App</a>
         </div>
-        <a href="${data.redeemUrl}" style="display: inline-block; background-color: #00D632; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin-top: 20px;">View Gift Card</a>
-        <p style="margin-top: 30px; color: #666;">Enjoy your gift!</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
+        <p style="color: #999; font-size: 12px; text-align: center;">This gift card was sent via ${process.env.APP_NAME}. If you have questions, contact support.</p>
       </div>
     `,
   }),
@@ -271,6 +267,11 @@ const templates = {
 // Send email function using Resend
 const sendEmail = async (to, template, data) => {
   try {
+    if (!to || typeof to !== 'string') {
+      console.error('sendEmail: invalid "to" address:', to);
+      return { success: false, error: 'Invalid recipient email address' };
+    }
+
     const { subject, html } = templates[template](data);
 
     const { data: result, error } = await resend.emails.send({

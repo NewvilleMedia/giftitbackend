@@ -210,6 +210,67 @@ router.post(
   })
 );
 
+// Create payment sheet data (for iOS PaymentSheet)
+router.post('/payment-sheet', authenticate, asyncHandler(async (req, res) => {
+  const user = req.user;
+  const { amount } = req.body; // amount in dollars, optional for setup-only mode
+
+  const stripeConfig = require('../config/stripe');
+  stripeConfig.checkStripeConfigured ? stripeConfig.checkStripeConfigured() : null;
+
+  // Ensure user has a Stripe customer
+  let customerId = user.stripeCustomerId;
+  if (!customerId) {
+    const customer = await stripeConfig.createCustomer(
+      user.email,
+      `${user.firstName} ${user.lastName}`,
+      { userId: user._id.toString() }
+    );
+    customerId = customer.id;
+    user.stripeCustomerId = customerId;
+    await user.save();
+  }
+
+  // Create ephemeral key
+  const ephemeralKey = await stripeConfig.stripe.ephemeralKeys.create(
+    { customer: customerId },
+    { apiVersion: '2023-10-16' }
+  );
+
+  // If amount provided, create PaymentIntent (for checkout)
+  let paymentIntent = null;
+  if (amount && amount > 0) {
+    paymentIntent = await stripeConfig.createPaymentIntent(
+      amount,
+      'usd',
+      customerId,
+      { userId: user._id.toString(), type: 'gift_card_purchase' }
+    );
+  }
+
+  // If no amount, create SetupIntent (for saving card only)
+  let setupIntent = null;
+  if (!amount) {
+    setupIntent = await stripeConfig.createSetupIntent(customerId);
+  }
+
+  res.json({
+    success: true,
+    data: {
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+      customerId,
+      ephemeralKeySecret: ephemeralKey.secret,
+      ...(paymentIntent && {
+        paymentIntentClientSecret: paymentIntent.client_secret,
+        paymentIntentId: paymentIntent.id,
+      }),
+      ...(setupIntent && {
+        setupIntentClientSecret: setupIntent.client_secret,
+      }),
+    }
+  });
+}));
+
 // Get affiliate code
 router.get(
   '/affiliate',

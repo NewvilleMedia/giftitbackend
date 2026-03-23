@@ -931,18 +931,23 @@ class BusinessService {
     // If employeeId provided, get employee details
     let recipientInfo = { email: recipientEmail, name: recipientName };
     if (employeeId) {
+      // employeeId might be the subdocument _id or the userId — try both
       const employee = business.employees.find(
-        (emp) => emp.userId.toString() === employeeId.toString()
+        (emp) => emp._id.toString() === employeeId.toString() ||
+                 emp.userId.toString() === employeeId.toString()
       );
-      if (employee) {
-        const empUser = await User.findById(employeeId);
-        if (empUser) {
-          recipientInfo = {
-            email: empUser.email,
-            name: `${empUser.firstName} ${empUser.lastName}`,
-          };
-        }
+      const userIdToLookup = employee ? employee.userId : employeeId;
+      const empUser = await User.findById(userIdToLookup);
+      if (empUser) {
+        recipientInfo = {
+          email: empUser.email,
+          name: `${empUser.firstName} ${empUser.lastName}`,
+        };
       }
+    }
+
+    if (!recipientInfo.email) {
+      throw new Error('Recipient email is required');
     }
 
     // Create the purchase
@@ -978,12 +983,38 @@ class BusinessService {
       businessId: business._id,
       type: 'purchase',
       amount,
+      netAmount: amount,
       currency: 'USD',
       status: 'completed',
-      paymentProvider: 'business_account',
+      paymentProvider: 'stripe',
       purchaseId: result.purchase._id,
       description: `Quick gift to ${recipientInfo.name} (${recipientInfo.email})`,
     });
+
+    // Send gift card email immediately (don't wait for Runa webhook)
+    try {
+      const GiftCard = require('../../models/GiftCard');
+      const giftCardDoc = await GiftCard.findById(giftCardId);
+      const senderUser = await User.findById(userId);
+
+      console.log('=== SENDING GIFT CARD EMAIL ===');
+      console.log('To:', recipientInfo.email);
+      console.log('Claim code:', claimCode);
+      console.log('Amount:', amount);
+
+      const emailResult = await sendEmail(recipientInfo.email, 'giftCardReceived', {
+        recipientName: recipientInfo.name || 'there',
+        senderName: senderUser ? `${senderUser.firstName} ${senderUser.lastName}` : business.name,
+        giftCardName: giftCardDoc ? giftCardDoc.name : 'Gift Card',
+        amount,
+        personalMessage: personalMessage || `A gift from ${business.name}`,
+        claimCode,
+      });
+      console.log('Email result:', emailResult);
+    } catch (emailError) {
+      console.error('Failed to send gift card email:', emailError);
+      // Don't fail the whole operation if email fails
+    }
 
     return {
       message: 'Gift sent successfully',

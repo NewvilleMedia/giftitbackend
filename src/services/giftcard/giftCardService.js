@@ -177,6 +177,25 @@ class GiftCardService {
       user.wallet.balance -= totalPaid;
       await user.save();
       paymentMethod = 'wallet';
+    } else if (paymentMethodId === 'business_account') {
+      // Business-initiated gift — charge the business's Stripe customer
+      const Business = require('../../models/Business');
+      const business = await Business.findById(purchaseData.businessId);
+      if (!business || !business.stripeCustomerId) {
+        throw new Error('Business does not have a payment method on file');
+      }
+      paymentIntent = await createPaymentIntent(
+        totalPaid,
+        giftCard.currency,
+        business.stripeCustomerId,
+        {
+          type: 'business_gift_card_purchase',
+          giftCardId: giftCardId.toString(),
+          businessId: business._id.toString(),
+          userId: userId.toString(),
+        }
+      );
+      paymentMethod = 'business_account';
     } else if (paymentMethodId) {
       // Create payment intent with Stripe
       paymentIntent = await createPaymentIntent(
