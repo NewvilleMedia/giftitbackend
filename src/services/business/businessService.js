@@ -1023,6 +1023,109 @@ class BusinessService {
       recipient: recipientInfo,
     };
   }
+
+  async topUpWallet(businessId, userId, amount, paymentMethodId) {
+    const business = await Business.findById(businessId);
+    if (!business) throw new Error('Business not found');
+    if (!business.isAdmin(userId)) throw new Error('Access denied');
+
+    const dollars = Number(amount);
+    if (!Number.isFinite(dollars) || dollars < 1 || dollars > 50000) {
+      throw new Error('Amount must be between $1 and $50,000');
+    }
+    if (!paymentMethodId) throw new Error('Payment method is required');
+
+    if (!business.stripeCustomerId) {
+      const customer = await stripe.customers.create({
+        email: business.email,
+        name: business.name,
+        metadata: { businessId: businessId.toString() },
+      });
+      business.stripeCustomerId = customer.id;
+      await business.save();
+    }
+
+    const cents = Math.round(dollars * 100);
+
+    const transaction = await Transaction.create({
+      userId,
+      businessId,
+      type: 'wallet_credit',
+      amount: dollars,
+      netAmount: dollars,
+      currency: 'USD',
+      status: 'pending',
+      paymentProvider: 'stripe',
+      description: `Wallet top-up for ${business.name}`,
+      metadata: { kind: 'business_wallet_topup', businessId: businessId.toString() },
+    });
+
+    let paymentIntent;
+    try {
+      paymentIntent = await stripe.paymentIntents.create({
+        amount: cents,
+        currency: 'usd',
+        customer: business.stripeCustomerId,
+        payment_method: paymentMethodId,
+        confirm: true,
+        off_session: true,
+        description: `GiftIt wallet top-up — ${business.name}`,
+        metadata: {
+          kind: 'business_wallet_topup',
+          businessId: businessId.toString(),
+          transactionId: transaction._id.toString(),
+        },
+      });
+    } catch (err) {
+      transaction.status = 'failed';
+      transaction.failureReason = err.message;
+      transaction.failureCode = err.code;
+      await transaction.save();
+      // Stripe error with payment_intent attached (e.g. authentication_required)
+      const pi = err.payment_intent || err.raw?.payment_intent;
+      if (pi) {
+        transaction.paymentIntentId = pi.id;
+        await transaction.save();
+        return {
+          status: pi.status,
+          requiresAction: pi.status === 'requires_action',
+          clientSecret: pi.client_secret,
+          paymentIntentId: pi.id,
+          transactionId: transaction._id,
+        };
+      }
+      throw err;
+    }
+
+    transaction.paymentIntentId = paymentIntent.id;
+
+    if (paymentIntent.status === 'succeeded') {
+      transaction.status = 'completed';
+      transaction.completedAt = new Date();
+      await transaction.save();
+
+      business.walletBalance = (business.walletBalance || 0) + dollars;
+      await business.save();
+
+      return {
+        status: 'succeeded',
+        walletBalance: business.walletBalance,
+        amount: dollars,
+        paymentIntentId: paymentIntent.id,
+        transactionId: transaction._id,
+      };
+    }
+
+    // requires_action / processing — return clientSecret so frontend can confirm
+    await transaction.save();
+    return {
+      status: paymentIntent.status,
+      requiresAction: paymentIntent.status === 'requires_action',
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      transactionId: transaction._id,
+    };
+  }
 }
 
 module.exports = new BusinessService();

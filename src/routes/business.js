@@ -445,6 +445,27 @@ router.post(
   })
 );
 
+// Top up the business wallet via a saved Stripe payment method
+router.post(
+  '/:businessId/wallet/top-up',
+  authenticate,
+  businessIdValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const { amount, paymentMethodId } = req.body;
+    const result = await businessService.topUpWallet(
+      req.params.businessId,
+      req.userId,
+      amount,
+      paymentMethodId
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
 router.get(
   '/:businessId/payment-methods',
   authenticate,

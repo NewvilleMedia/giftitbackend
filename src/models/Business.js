@@ -88,6 +88,11 @@ const businessSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    walletBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     billing: {
       plan: {
         type: String,

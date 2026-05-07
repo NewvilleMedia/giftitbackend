@@ -5,6 +5,7 @@ const giftCardService = require('../services/giftcard');
 const notificationService = require('../services/notification');
 const Transaction = require('../models/Transaction');
 const GiftCardPurchase = require('../models/GiftCardPurchase');
+const Business = require('../models/Business');
 const { asyncHandler } = require('../middleware/errorHandler');
 
 // Stripe webhook
@@ -33,6 +34,20 @@ router.post(
         });
 
         if (transaction) {
+          // Wallet top-up: credit the business wallet (idempotent — only if not already completed)
+          const isWalletTopUp =
+            paymentIntent.metadata?.kind === 'business_wallet_topup' ||
+            transaction.metadata?.get?.('kind') === 'business_wallet_topup' ||
+            transaction.metadata?.kind === 'business_wallet_topup';
+
+          if (isWalletTopUp && transaction.status !== 'completed' && transaction.businessId) {
+            const business = await Business.findById(transaction.businessId);
+            if (business) {
+              business.walletBalance = (business.walletBalance || 0) + transaction.amount;
+              await business.save();
+            }
+          }
+
           await transaction.complete();
 
           // Complete purchase if it's a gift card purchase
