@@ -12,6 +12,8 @@ const {
   changePasswordValidator,
   refreshTokenValidator,
   verifyEmailValidator,
+  registerBusinessValidator,
+  resendVerificationPublicValidator,
   validate,
 } = require('../validators');
 
@@ -27,6 +29,37 @@ router.post(
       success: true,
       message: 'Registration successful. Please verify your email.',
       data: result,
+    });
+  })
+);
+
+// Register a business account (creates User + Business)
+router.post(
+  '/register-business',
+  authRateLimitMiddleware,
+  registerBusinessValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await authService.registerBusiness(req.body);
+    res.status(201).json({
+      success: true,
+      message: 'Registration successful. Please verify your email to activate your account.',
+      data: result,
+    });
+  })
+);
+
+// Resend verification email by email address (unauthenticated, rate-limited)
+router.post(
+  '/resend-verification-public',
+  authRateLimitMiddleware,
+  resendVerificationPublicValidator,
+  validate,
+  asyncHandler(async (req, res) => {
+    const result = await authService.resendVerificationByEmail(req.body.email);
+    res.json({
+      success: true,
+      ...result,
     });
   })
 );

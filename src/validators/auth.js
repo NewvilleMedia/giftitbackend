@@ -88,6 +88,64 @@ const verifyEmailValidator = [
     .withMessage('Verification token is required'),
 ];
 
+const registerBusinessValidator = [
+  body('email')
+    .isEmail()
+    .withMessage('Please provide a valid email address')
+    .normalizeEmail()
+    .toLowerCase(),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters long')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
+  body('firstName')
+    .trim()
+    .notEmpty()
+    .withMessage('First name is required')
+    .isLength({ max: 50 })
+    .withMessage('First name cannot exceed 50 characters'),
+  body('lastName')
+    .trim()
+    .notEmpty()
+    .withMessage('Last name is required')
+    .isLength({ max: 50 })
+    .withMessage('Last name cannot exceed 50 characters'),
+  body('phone')
+    .optional({ checkFalsy: true })
+    .matches(/^\+?[\d\s-]{10,}$/)
+    .withMessage('Please provide a valid phone number'),
+  body('businessName')
+    .trim()
+    .notEmpty()
+    .withMessage('Business name is required')
+    .isLength({ max: 100 })
+    .withMessage('Business name cannot exceed 100 characters'),
+  body('industry')
+    .optional({ checkFalsy: true })
+    .isIn(['technology', 'finance', 'healthcare', 'retail', 'manufacturing', 'hospitality', 'education', 'other'])
+    .withMessage('Invalid industry'),
+  body('size')
+    .optional({ checkFalsy: true })
+    .isIn(['1-10', '11-50', '51-200', '201-500', '501-1000', '1000+'])
+    .withMessage('Invalid company size'),
+  body('website')
+    .optional({ checkFalsy: true })
+    .isURL({ require_protocol: false })
+    .withMessage('Please provide a valid website URL'),
+  body('acceptTerms')
+    .equals('true')
+    .withMessage('You must accept the Terms of Service and Privacy Policy'),
+];
+
+const resendVerificationPublicValidator = [
+  body('email')
+    .isEmail()
+    .withMessage('Please provide a valid email address')
+    .normalizeEmail()
+    .toLowerCase(),
+];
+
 module.exports = {
   registerValidator,
   loginValidator,
@@ -96,4 +154,6 @@ module.exports = {
   changePasswordValidator,
   refreshTokenValidator,
   verifyEmailValidator,
+  registerBusinessValidator,
+  resendVerificationPublicValidator,
 };

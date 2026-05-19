@@ -1,5 +1,7 @@
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const User = require('../../models/User');
+const Business = require('../../models/Business');
 const {
   generateToken,
   generateRefreshToken,
@@ -64,6 +66,117 @@ class AuthService {
       accessToken,
       refreshToken,
     };
+  }
+
+  // Register a business account (creates User + Business atomically)
+  async registerBusiness(payload) {
+    const {
+      email,
+      password,
+      firstName,
+      lastName,
+      phone,
+      businessName,
+      industry,
+      size,
+      website,
+    } = payload;
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      throw new Error('Email already registered');
+    }
+
+    // Stripe customer (non-fatal if it fails)
+    let stripeCustomerId = null;
+    try {
+      const stripeCustomer = await createCustomer(email, `${firstName} ${lastName}`);
+      stripeCustomerId = stripeCustomer.id;
+    } catch (error) {
+      console.error('Stripe customer creation failed:', error);
+    }
+
+    // Verification token
+    const verificationToken = generateRandomString(32);
+    const hashedToken = hashString(verificationToken);
+
+    // We avoid a transaction (single-node Mongo dev environments don't support them)
+    // and instead create the User first, then the Business, then link back. If the
+    // Business create fails we roll back the User to keep the email available.
+    const user = await User.create({
+      email,
+      password,
+      firstName,
+      lastName,
+      phone,
+      stripeCustomerId,
+      role: 'business',
+      emailVerificationToken: hashedToken,
+      emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+
+    let business;
+    try {
+      business = await Business.create({
+        name: businessName,
+        email,
+        phone,
+        website,
+        industry: industry || 'other',
+        size: size || '1-10',
+        ownerId: user._id,
+        admins: [user._id],
+      });
+    } catch (err) {
+      await User.deleteOne({ _id: user._id });
+      throw err;
+    }
+
+    user.businessId = business._id;
+    await user.save();
+
+    const accessToken = generateToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
+    await sendEmail(email, 'emailVerification', {
+      firstName,
+      verificationUrl,
+    });
+    await sendEmail(email, 'welcome', { firstName });
+
+    return {
+      user: this.sanitizeUser(user),
+      business,
+      accessToken,
+      refreshToken,
+    };
+  }
+
+  // Resend verification email by EMAIL ADDRESS (no auth required).
+  // We always return success so we don't leak which emails are registered.
+  async resendVerificationByEmail(email) {
+    const user = await User.findOne({ email });
+
+    if (!user || user.isEmailVerified) {
+      // Silent no-op for security
+      return { message: 'If an unverified account exists for that email, a verification link has been sent.' };
+    }
+
+    const verificationToken = generateRandomString(32);
+    const hashedToken = hashString(verificationToken);
+
+    user.emailVerificationToken = hashedToken;
+    user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await user.save();
+
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
+    await sendEmail(user.email, 'emailVerification', {
+      firstName: user.firstName,
+      verificationUrl,
+    });
+
+    return { message: 'If an unverified account exists for that email, a verification link has been sent.' };
   }
 
   // Login user
